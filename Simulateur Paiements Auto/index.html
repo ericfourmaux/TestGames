@@ -1,0 +1,362 @@
+
+<!DOCTYPE html>
+<html lang="fr-CA">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Simulateur de paiement – véhicule d’occasion (Québec)</title>
+  <style>
+    :root{
+      --bg:#0f172a;
+      --card:#111827;
+      --text:#e5e7eb;
+      --muted:#94a3b8;
+      --primary:#22c55e;
+      --accent:#38bdf8;
+      --danger:#ef4444;
+    }
+    *{box-sizing:border-box}
+    body{
+      margin:0; padding:24px;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, "Helvetica Neue", Arial;
+      background: radial-gradient(1200px 600px at 80% -200px, #1e293b 0%, var(--bg) 40%, #0b1020 100%);
+      color:var(--text);
+    }
+    h1{font-size:1.6rem; margin:0 0 12px}
+    .sub{color:var(--muted); margin-bottom:20px}
+    .container{display:grid; gap:18px; grid-template-columns: 1fr; max-width:900px; margin:auto;}
+    .card{
+      background:linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.00));
+      border:1px solid rgba(148,163,184,0.15);
+      border-radius:14px; padding:18px;
+      backdrop-filter: blur(4px);
+    }
+    .grid{ display:grid; gap:12px }
+    @media(min-width:700px){ .grid.cols-2{ grid-template-columns: 1fr 1fr } }
+    label{ display:block; font-weight:600; margin-bottom:6px }
+    input{
+      width:100%; padding:10px 12px; border-radius:10px; border:1px solid rgba(148,163,184,0.25);
+      background:#0b1222; color:var(--text);
+    }
+    .row{ display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-top:12px }
+    .btn{
+      appearance:none; border:0; border-radius:10px; padding:12px 14px; color:#052e1b;
+      background:linear-gradient(180deg, #34d399, #22c55e); font-weight:700; cursor:pointer;
+    }
+    .btn.secondary{ background:linear-gradient(180deg, #60a5fa, #3b82f6); color:#082140 }
+    .error{ color:var(--danger); font-weight:600; margin-top:8px; display:none }
+    .kpi{
+      display:grid; grid-template-columns: repeat(2, 1fr); gap:12px;
+    }
+    @media(min-width:700px){ .kpi{ grid-template-columns: repeat(4, 1fr) } }
+    .kpi .item{ background:#0a1324; border:1px solid rgba(56,189,248,0.2); padding:14px; border-radius:12px; }
+    .kpi .label{ color:var(--muted); font-size:0.85rem }
+    .kpi .value{ font-size:1.25rem; font-weight:700 }
+    table{
+      width:100%; border-collapse: collapse; margin-top:10px; font-size:0.92rem;
+      border:1px solid rgba(148,163,184,0.15);
+    }
+    th, td{ padding:8px 10px; text-align:right; border-bottom:1px solid rgba(148,163,184,0.15) }
+    th:first-child, td:first-child{ text-align:left }
+    tfoot td{ font-weight:700 }
+    .switch{
+      display:inline-flex; align-items:center; gap:8px; padding:8px 10px; border:1px solid rgba(148,163,184,0.25);
+      border-radius:999px; background:#0b1222; color:var(--text);
+    }
+    .footnote{ color:var(--muted); font-size:0.85rem; margin-top:8px }
+
+    /* Ajout : petite étiquette pour les années à côté des mois */
+    .inline-field{
+      display:flex; align-items:flex-end; gap:8px;
+    }
+    .suffix{
+      white-space:nowrap;
+      color:var(--muted);
+      font-size:0.9rem;
+      padding:8px 10px;
+      border:1px solid rgba(148,163,184,0.25);
+      border-radius:10px;
+      background:#0b1222;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Simulateur de paiement – véhicule d’occasion (QC)</h1>
+    <p class="sub">Calcul basé uniquement sur le <strong>prix du véhicule</strong> (CAD), avec acompte et reprise. Sans taxes ni frais annexes.</p>
+  </header>
+
+  <div class="container">
+    <!-- Formulaire -->
+    <section class="card">
+      <h2>Paramètres</h2>
+      <div class="grid cols-2">
+        <div>
+          <label for="price">Prix du véhicule (CAD)</label>
+          <input id="price" type="number" placeholder="ex. 15000" inputmode="decimal" value="15000" min="0" step="0.01">
+        </div>
+        <div>
+          <label for="down">Acompte (CAD)</label>
+          <input id="down" type="number" placeholder="ex. 2000" inputmode="decimal" value="2000" min="0" step="0.01">
+        </div>
+
+        <div>
+          <label for="trade">Valeur de reprise (CAD)</label>
+          <input id="trade" type="number" placeholder="ex. 0" inputmode="decimal" value="0" min="0" step="0.01">
+        </div>
+        <div>
+          <label for="apr">Taux annuel (APR) (%)</label>
+          <input id="apr" type="number" placeholder="ex. 6.99" inputmode="decimal" value="6.99" min="0" step="0.01">
+        </div>
+
+        <!-- Champ Durée avec correspondance en années -->
+        <div class="inline-field">
+          <div style="flex:1">
+            <label for="months">Durée (mois)</label>
+            <input id="months" type="number" placeholder="ex. 60" inputmode="numeric" value="60" min="1" step="1">
+          </div>
+          <div id="yearsSuffix" class="suffix">≈ 5,0 ans</div>
+        </div>
+
+        <div>
+          <label class="switch">
+            <input id="useWeeklyAmort" type="checkbox" />
+            <span>Hebdomadaire précis (APR/52, ~4,345 semaines/mois)</span>
+          </label>
+        </div>
+      </div>
+
+      <div class="row">
+        <button class="btn" id="calcBtn">Calculer</button>
+        <button class="btn secondary" id="resetBtn">Réinitialiser</button>
+      </div>
+      <div id="error" class="error">Veuillez vérifier les valeurs (aucun montant négatif, durée ≥ 1).</div>
+    </section>
+
+    <!-- Résultats -->
+    <section class="card">
+      <h2>Résultats</h2>
+      <div class="kpi">
+        <div class="item">
+          <div class="label">Montant net du véhicule</div>
+          <div class="value" id="vehicleNet">—</div>
+        </div>
+        <div class="item">
+          <div class="label">Capital emprunté</div>
+          <div class="value" id="principal">—</div>
+        </div>
+        <div class="item">
+          <div class="label">Mensualité</div>
+          <div class="value" id="monthly">—</div>
+        </div>
+        <div class="item">
+          <div class="label">Hebdomadaire</div>
+          <div class="value" id="weekly">—</div>
+        </div>
+      </div>
+
+      <div style="margin-top:14px" class="grid cols-2">
+        <div>
+          <div class="label">Intérêts totaux</div>
+          <div class="value" id="totalInterest">—</div>
+        </div>
+        <div>
+          <div class="label">Coût total (capital + intérêts)</div>
+          <div class="value" id="totalCost">—</div>
+        </div>
+      </div>
+
+      <p class="footnote">
+        Méthodes d’hebdomadaire :
+        <br>• <strong>Mensualité / 4,345</strong> (approximation).
+        <br>• <strong>Amortissement hebdomadaire</strong> avec APR/52 et nombre de semaines ≈ 4,345 × mois (case cochée).
+      </p>
+    </section>
+
+    <!-- Amortissement -->
+    <section class="card">
+      <h2>Tableau d’amortissement (extrait)</h2>
+      <div class="footnote">Affiche les 24 premières périodes.</div>
+      <table id="schedule">
+        <thead>
+          <tr>
+            <th>Période</th>
+            <th>Versement</th>
+            <th>Intérêts</th>
+            <th>Capital</th>
+            <th>Solde restant</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+        <tfoot>
+          <tr>
+            <td>Total</td>
+            <td id="sumPayment">—</td>
+            <td id="sumInterest">—</td>
+            <td id="sumPrincipal">—</td>
+            <td>—</td>
+          </tr>
+        </tfoot>
+      </table>
+    </section>
+  </div>
+
+  <script>
+    // Format en dollars canadiens (fr-CA)
+    const fmt = (n) => isFinite(n) ? n.toLocaleString('fr-CA', { style: 'currency', currency: 'CAD' }) : '—';
+    const safeNum = (v) => {
+      const n = Number(v);
+      return isFinite(n) ? n : NaN;
+    };
+
+    // Met à jour la correspondance mois -> années dans l'étiquette à côté
+    function updateYearsSuffix() {
+      const months = safeNum(document.getElementById('months').value);
+      const el = document.getElementById('yearsSuffix');
+      if (isNaN(months) || months <= 0) {
+        el.textContent = '—';
+        return;
+      }
+      const years = months / 12;
+      // Affichage avec une décimale (ex. 5,0 ans) en locale fr-CA
+      el.textContent = `≈ ${years.toLocaleString('fr-CA', { maximumFractionDigits: 1 })} ans`;
+    }
+
+    function calc() {
+      const price = safeNum(document.getElementById('price').value);
+      const down = safeNum(document.getElementById('down').value);
+      const trade = safeNum(document.getElementById('trade').value);
+      const apr = safeNum(document.getElementById('apr').value) / 100;
+      const months = safeNum(document.getElementById('months').value);
+      const weeklyMode = document.getElementById('useWeeklyAmort').checked;
+
+      const errorEl = document.getElementById('error');
+      errorEl.style.display = 'none';
+
+      // Validation basique
+      if ([price, down, trade, apr, months].some(v => isNaN(v) || v < 0) || months < 1) {
+        errorEl.style.display = 'block';
+        updateYearsSuffix(); // garde l'étiquette en cohérence
+        return;
+      }
+
+      // Montant net du véhicule (sans taxes/frais)
+      const vehicleNet = Math.max(price - trade, 0);
+
+      // Capital à financer après acompte
+      let principal = Math.max(vehicleNet - down, 0);
+
+      // Si taux 0 % : paiement = principal / mois
+      let monthlyPayment, totalInterest, totalCost;
+      if (apr === 0) {
+        monthlyPayment = months > 0 ? principal / months : principal;
+        totalInterest = 0;
+        totalCost = principal;
+      } else {
+        const i_m = apr / 12; // taux mensuel
+        monthlyPayment = principal * i_m / (1 - Math.pow(1 + i_m, -months));
+        totalCost = monthlyPayment * months;
+        totalInterest = totalCost - principal;
+      }
+
+      // Paiement hebdomadaire
+      const weeklyPaymentSimple = monthlyPayment / 4.345; // moyenne de semaines/mois
+      let weeklyPaymentAmort, weeksCount;
+      if (apr === 0) {
+        weeksCount = Math.round(months * 4.345);
+        weeklyPaymentAmort = weeksCount > 0 ? principal / weeksCount : principal;
+      } else {
+        const i_w = apr / 52;
+        weeksCount = Math.round(months * 4.345);
+        weeklyPaymentAmort = principal * i_w / (1 - Math.pow(1 + i_w, -weeksCount));
+      }
+      const weeklyToShow = weeklyMode ? weeklyPaymentAmort : weeklyPaymentSimple;
+
+      // Mise à jour des KPI
+      document.getElementById('vehicleNet').textContent = fmt(vehicleNet);
+      document.getElementById('principal').textContent = fmt(principal);
+      document.getElementById('monthly').textContent = fmt(monthlyPayment);
+      document.getElementById('weekly').textContent = fmt(weeklyToShow);
+      document.getElementById('totalInterest').textContent = fmt(totalInterest);
+      document.getElementById('totalCost').textContent = fmt(principal + totalInterest);
+
+      // Tableau d’amortissement – 24 lignes
+      const tbody = document.querySelector('#schedule tbody');
+      tbody.innerHTML = '';
+      let sumPay = 0, sumInt = 0, sumPrin = 0;
+
+      const periodsToShow = 24;
+      if (!weeklyMode) {
+        // Amortissement mensuel
+        let balance = principal;
+        const i_m = apr / 12;
+        for (let p = 1; p <= Math.min(months, periodsToShow); p++) {
+          const interest = apr === 0 ? 0 : balance * i_m;
+          const principalPart = monthlyPayment - interest;
+          balance = Math.max(balance - principalPart, 0);
+
+          const tr = document.createElement('tr');
+          tr.innerHTML = `
+            <td>M${p}</td>
+            <td>${fmt(monthlyPayment)}</td>
+            <td>${fmt(interest)}</td>
+            <td>${fmt(principalPart)}</td>
+            <td>${fmt(balance)}</td>
+          `;
+          tbody.appendChild(tr);
+          sumPay += monthlyPayment; sumInt += interest; sumPrin += principalPart;
+        }
+      } else {
+        // Amortissement hebdomadaire
+        let balance = principal;
+        const i_w = apr / 52;
+        const pay = weeklyPaymentAmort;
+        const maxRows = Math.min(weeksCount, periodsToShow);
+        for (let p = 1; p <= maxRows; p++) {
+          const interest = apr === 0 ? 0 : balance * i_w;
+          const principalPart = pay - interest;
+          balance = Math.max(balance - principalPart, 0);
+
+          const tr = document.createElement('tr');
+          tr.innerHTML = `
+            <td>W${p}</td>
+            <td>${fmt(pay)}</td>
+            <td>${fmt(interest)}</td>
+            <td>${fmt(principalPart)}</td>
+            <td>${fmt(balance)}</td>
+          `;
+          tbody.appendChild(tr);
+          sumPay += pay; sumInt += interest; sumPrin += principalPart;
+        }
+      }
+      document.getElementById('sumPayment').textContent = fmt(sumPay);
+      document.getElementById('sumInterest').textContent = fmt(sumInt);
+      document.getElementById('sumPrincipal').textContent = fmt(sumPrin);
+
+      // Mettre à jour l'étiquette années
+      updateYearsSuffix();
+    }
+
+    // Événements
+    document.getElementById('calcBtn').addEventListener('click', calc);
+    document.getElementById('resetBtn').addEventListener('click', () => {
+      document.getElementById('price').value = 15000;
+      document.getElementById('down').value = 2000;
+      document.getElementById('trade').value = 0;
+      document.getElementById('apr').value = 6.99;
+      document.getElementById('months').value = 60;
+      document.getElementById('useWeeklyAmort').checked = false;
+      document.getElementById('error').style.display = 'none';
+      updateYearsSuffix();
+      calc();
+    });
+
+    // Mise à jour en temps réel quand l'utilisateur tape dans "mois"
+    document.getElementById('months').addEventListener('input', updateYearsSuffix);
+
+    // Calcul & étiquette initiale
+    updateYearsSuffix();
+    calc();
+  </script>
+</body>
+</html>
