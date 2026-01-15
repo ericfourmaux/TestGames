@@ -1,0 +1,621 @@
+
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Acrojet-like – Simulateur ES6 Vanilla</title>
+<style>
+  :root{
+    --bg:#0d1117; --fg:#c9d1d9; --panel:#161b22; --accent:#58a6ff; --warn:#f39c12;
+  }
+  html,body {margin:0; height:100%; background:var(--bg); color:var(--fg); font-family:system-ui,Segoe UI,Roboto,Arial,sans-serif;}
+  #hud {display:flex; flex-direction:column; height:100%; }
+  header {padding:8px 12px; background:#0b1420; border-bottom:1px solid #111; display:flex; justify-content:space-between; align-items:center;}
+  header .title {font-weight:700; letter-spacing:.3px;}
+  header .help {font-size:13px; opacity:.85}
+  #main {display:grid; grid-template-columns: 2fr 1fr; gap:10px; padding:10px; height:calc(100% - 48px);}
+  #view {background:#000; border:1px solid #111; border-radius:6px; position:relative; overflow:hidden;}
+  #panel {display:grid; grid-template-columns: repeat(3,1fr); grid-auto-rows:1fr; gap:8px;}
+  canvas.gauge, #outside {width:100%; height:100%;}
+  .card {background:var(--panel); border:1px solid #111; border-radius:6px; overflow:hidden; display:flex; flex-direction:column;}
+  .card h3 {margin:0; padding:6px 10px; font-size:13px; letter-spacing:.2px; background:#0f1623; border-bottom:1px solid #111;}
+  .gauge-wrap {flex:1; display:flex; align-items:center; justify-content:center; padding:8px;}
+  .legend {position:absolute; left:10px; bottom:10px; font-size:12px; background:rgba(0,0,0,.4); padding:6px 8px; border-radius:4px;}
+  .tag {display:inline-block; margin-right:8px;}
+  .tag b {color:var(--accent)}
+  #panel .card .gauge-wrap {aspect-ratio:1 / 1;}
+  /* Vue externe : pixel art */
+  #outside { image-rendering: pixelated; background:#000; }
+  @media (max-width: 980px){
+    #main {grid-template-columns: 1fr; grid-template-rows: 1fr 1fr;}
+  }
+</style>
+</head>
+<body>
+<div id="hud">
+  <header>
+    <div class="title">Acrojet-like – Vanilla JS / ES6 / POO</div>
+    <div class="help">Contrôles : ←/→ ailerons, ↑/↓ profondeur, A/E palonnier, W/S puissance, F volets, P pause, R reset</div>
+  </header>
+  <div id="main">
+    <div id="view" class="card">
+      <h3>Vue externe (style CPC)</h3>
+      <div class="gauge-wrap"><canvas id="outside"></canvas></div>
+      <div class="legend" id="legend"></div>
+    </div>
+    <div id="panel">
+      <div class="card"><h3>Airspeed (kts)</h3><div class="gauge-wrap"><canvas id="asi" class="gauge"></canvas></div></div>
+      <div class="card"><h3>Attitude</h3><div class="gauge-wrap"><canvas id="att" class="gauge"></canvas></div></div>
+      <div class="card"><h3>Altimeter (ft)</h3><div class="gauge-wrap"><canvas id="alt" class="gauge"></canvas></div></div>
+      <div class="card"><h3>Turn Coord.</h3><div class="gauge-wrap"><canvas id="turn" class="gauge"></canvas></div></div>
+      <div class="card"><h3>Heading</h3><div class="gauge-wrap"><canvas id="hdg" class="gauge"></canvas></div></div>
+      <div class="card"><h3>VSI (ft/min)</h3><div class="gauge-wrap"><canvas id="vsi" class="gauge"></canvas></div></div>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ============================================================
+   Utilitaires Canvas / Maths
+   ============================================================ */
+function setupHiDPICanvas(canvas){
+  const parent = canvas.parentElement;
+  const w = Math.floor(parent.clientWidth);
+  const h = Math.floor(parent.clientHeight);
+  const dpr = Math.max(1, window.devicePixelRatio || 1);
+  canvas.width = Math.max(1, w * dpr);
+  canvas.height = Math.max(1, h * dpr);
+  canvas.style.width = w + 'px';
+  canvas.style.height = h + 'px';
+  const ctx = canvas.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  return ctx;
+}
+const DEG = Math.PI/180;
+const RAD2DEG = 180/Math.PI;
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const lerp = (a,b,t)=> a + (b-a)*t;
+const kn = (ms)=> ms * 1.943844;
+const ft = (m)=> m * 3.28084;
+const fpm = (ms)=> ms * 196.850394;
+const wrapAngle = (ang)=> {
+  while(ang < -Math.PI) ang += 2*Math.PI;
+  while(ang >  Math.PI) ang -= 2*Math.PI;
+  return ang;
+};
+
+/* ============================================================
+   Modèle avion (POO / ES6)
+   ============================================================ */
+class Aircraft {
+  constructor(){
+    this.v = 70;                // m/s
+    this.alt = 800;             // m
+    this.vs = 0;                // m/s
+    this.x = 0; this.y = 0;
+    this.roll = 0;
+    this.pitch = 0.05;
+    this.yaw = 0;
+    this.p = 0; this.q = 0; this.r = 0;
+
+    this.cmd = { aileron:0, elevator:0, rudder:0, throttle:0.7, flaps:0 };
+    this.ctrl = { aileron:0, elevator:0, rudder:0, throttle:0.7, flaps:0 };
+
+    this.m = 950; this.S = 13.5; this.CL0 = 0.25; this.CLα = 5.0;
+    this.CD0 = 0.028; this.k = 0.045; this.Tmax = 18000; this.g = 9.81;
+
+    this.maxRoll = 80*DEG; this.maxPitch = 45*DEG; this.maxR = 2.5;
+    this.rollResp = 4.0; this.pitchResp = 3.0; this.yawResp = 2.0; this.ctrlSlew = 5.0;
+    this.rollDamp = 2.5; this.pitchDamp = 2.2; this.yawDamp = 2.0;
+  }
+  airDensity(){ return 1.225 * Math.exp(-this.alt / 8500); }
+  update(dt){
+    // Lissage commandes
+    const s = clamp(this.ctrlSlew*dt, 0, 1);
+    for(const k of ['aileron','elevator','rudder','throttle']) this.ctrl[k] = lerp(this.ctrl[k], this.cmd[k], s);
+
+    const rho = this.airDensity(), qdyn = 0.5 * rho * this.v * this.v;
+    const alpha = this.pitch;
+    const flapsCL = this.ctrl.flaps ? 0.5 : 0.0;
+    const flapsCD = this.ctrl.flaps ? 0.06 : 0.0;
+    const CL = this.CL0 + flapsCL + this.CLα * alpha;
+    const CD = this.CD0 + flapsCD + this.k * CL * CL;
+    const L = qdyn * this.S * CL, D = qdyn * this.S * CD, T = this.Tmax * clamp(this.ctrl.throttle, 0, 1);
+
+    // Angulaire
+    const p_dot = this.rollResp  * clamp(this.ctrl.aileron, -1, 1) - this.rollDamp * this.p;
+    const q_dot = this.pitchResp * clamp(this.ctrl.elevator, -1, 1) - this.pitchDamp * this.q;
+    const r_cmd = this.yawResp   * clamp(this.ctrl.rudder,  -1, 1) - this.yawDamp  * this.r;
+    this.p += p_dot * dt; this.q += q_dot * dt; this.r += r_cmd * dt;
+    this.roll  = clamp(this.roll + this.p * dt, -this.maxRoll, this.maxRoll);
+    this.pitch = clamp(this.pitch + this.q * dt, -this.maxPitch, this.maxPitch);
+    this.yaw   = wrapAngle(this.yaw + this.r * dt);
+
+    // Translation
+    const v_dot = (T - D)/this.m - this.g * Math.sin(this.pitch);
+    this.v = Math.max(15, this.v + v_dot * dt);
+    const az = (L * Math.cos(this.roll) - this.m * this.g) / this.m;
+    this.vs += az * dt;
+    this.alt = Math.max(0, this.alt + this.vs * dt);
+
+    // Virage coordonné approx
+    const turnRate = this.v > 5 ? this.g * Math.tan(this.roll) / this.v : 0;
+    this.yaw = wrapAngle(this.yaw + turnRate * dt);
+
+    // Avance sol
+    const vh = this.v * Math.cos(this.pitch);
+    this.x += vh * Math.cos(this.yaw) * dt;
+    this.y += vh * Math.sin(this.yaw) * dt;
+
+    // Roulement au sol
+    if(this.alt <= 0){
+      this.alt = 0; if(this.vs < 0) this.vs = 0; this.v *= 0.998;
+    }
+  }
+}
+
+/* ============================================================
+   Instruments (identiques à la version précédente)
+   ============================================================ */
+class Instrument { constructor(canvas){ this.canvas=canvas; this.ctx=setupHiDPICanvas(canvas); window.addEventListener('resize', ()=> this.ctx = setupHiDPICanvas(canvas)); } clear(){ const {ctx, canvas}=this; ctx.clearRect(0,0,canvas.clientWidth, canvas.clientHeight);} draw(){} }
+
+class AirspeedIndicator extends Instrument {
+  draw(state){
+    const ctx=this.ctx, cw=this.canvas.clientWidth, ch=this.canvas.clientHeight;
+    this.clear();
+    const r = Math.min(cw, ch)*0.45, cx=cw/2, cy=ch/2;
+    ctx.save(); ctx.translate(cx,cy);
+    ctx.strokeStyle = '#7fbf7f'; ctx.lineWidth=3; ctx.beginPath(); ctx.arc(0,0,r,0,Math.PI*2); ctx.stroke();
+    const vKts = clamp(kn(state.v), 0, 220);
+    const min=0, max=200, start=-140*DEG, end=140*DEG;
+    for(let k=min; k<=max; k+=10){
+      const t=(k-min)/(max-min), ang=start+t*(end-start), len=(k%20===0)?16:8;
+      ctx.beginPath(); ctx.moveTo((r-10)*Math.cos(ang),(r-10)*Math.sin(ang));
+      ctx.lineTo((r-10-len)*Math.cos(ang),(r-10-len)*Math.sin(ang));
+      ctx.strokeStyle=(k>=60&&k<=160)?'#7fbf7f':'#888'; ctx.stroke();
+      if(k%20===0){ ctx.fillStyle='#c9d1d9'; ctx.font='12px monospace'; ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillText(k.toString(), (r-30)*Math.cos(ang),(r-30)*Math.sin(ang));}
+    }
+    const t=(vKts-min)/(max-min), a=start+t*(end-start);
+    ctx.strokeStyle='#58a6ff'; ctx.lineWidth=4; ctx.beginPath(); ctx.moveTo(-8,0); ctx.lineTo((r-42)*Math.cos(a),(r-42)*Math.sin(a)); ctx.stroke();
+    ctx.fillStyle='#111'; ctx.fillRect(-36, r-35, 72, 24);
+    ctx.strokeStyle='#333'; ctx.strokeRect(-36, r-35, 72, 24);
+    ctx.fillStyle='#58a6ff'; ctx.font='bold 16px monospace'; ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillText(Math.round(vKts).toString().padStart(3,' '), 0, r-23);
+    ctx.restore();
+  }
+}
+class AttitudeIndicator extends Instrument {
+  draw(state){
+    const ctx=this.ctx, cw=this.canvas.clientWidth, ch=this.canvas.clientHeight;
+    this.clear();
+    const r=Math.min(cw,ch)*0.46, cx=cw/2, cy=ch/2;
+    ctx.save(); ctx.translate(cx,cy);
+    ctx.save(); ctx.rotate(state.roll);
+    const pitchPx = state.pitch * RAD2DEG * 4.0;
+    ctx.translate(0, pitchPx);
+    ctx.fillStyle='#1f4f7a'; ctx.fillRect(-cw, -ch*2, cw*2, ch*2);
+    ctx.fillStyle='#5c3d1e'; ctx.fillRect(-cw, 0, cw*2, ch*2);
+    ctx.strokeStyle='#ffffff'; ctx.lineWidth=2; ctx.beginPath(); ctx.moveTo(-cw,0); ctx.lineTo(cw,0); ctx.stroke();
+    ctx.strokeStyle='#ddd'; ctx.lineWidth=1.5; ctx.fillStyle='#ddd'; ctx.font='12px monospace'; ctx.textAlign='center';
+    for(let deg=-30; deg<=30; deg+=5){
+      if(deg===0) continue;
+      const y = -(deg * 4.0), len = (deg%10===0)? 40 : 20;
+      ctx.beginPath(); ctx.moveTo(-len,y); ctx.lineTo(len,y); ctx.stroke();
+      if(deg%10===0){ ctx.fillText(Math.abs(deg).toString(), -len-10, y); ctx.fillText(Math.abs(deg).toString(), len+10, y); }
+    }
+    ctx.restore();
+    ctx.strokeStyle='#c9d1d9'; ctx.lineWidth=3; ctx.beginPath(); ctx.arc(0,0,r,0,Math.PI*2); ctx.stroke();
+    ctx.strokeStyle='#f5c542'; ctx.lineWidth=3; ctx.beginPath(); ctx.moveTo(-35,0); ctx.lineTo(35,0); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(-5,20); ctx.lineTo(5,20); ctx.stroke();
+    ctx.restore();
+  }
+}
+class Altimeter extends Instrument {
+  draw(state){
+    const ctx=this.ctx, cw=this.canvas.clientWidth, ch=this.canvas.clientHeight;
+    this.clear();
+    const r=Math.min(cw,ch)*0.46, cx=cw/2, cy=ch/2; const altFt=Math.max(0, ft(state.alt));
+    ctx.save(); ctx.translate(cx,cy);
+    ctx.strokeStyle='#bbb'; ctx.lineWidth=3; ctx.beginPath(); ctx.arc(0,0,r,0,Math.PI*2); ctx.stroke();
+    for(let k=0;k<60;k++){
+      const ang=-Math.PI/2 + k*(Math.PI*2/60), len=(k%5===0)?14:8;
+      ctx.beginPath(); ctx.moveTo((r-10)*Math.cos(ang),(r-10)*Math.sin(ang));
+      ctx.lineTo((r-10-len)*Math.cos(ang),(r-10-len)*Math.sin(ang));
+      ctx.strokeStyle=(k%5===0)?'#ddd':'#777'; ctx.stroke();
+    }
+    ctx.fillStyle='#c9d1d9'; ctx.font='12px monospace'; ctx.textAlign='center'; ctx.textBaseline='middle';
+    for(let i=0;i<12;i++){ const ang=-Math.PI/2 + i*(Math.PI*2/12); const label=(i===0)?'0':(i*100).toString(); ctx.fillText(label,(r-34)*Math.cos(ang),(r-34)*Math.sin(ang));}
+    const a100  = -Math.PI/2 + (altFt%1000) / 1000 * Math.PI*2;
+    const a1000 = -Math.PI/2 + (Math.floor(altFt/1000)%10) / 10 * Math.PI*2;
+    const a10k  = -Math.PI/2 + (Math.floor(altFt/10000)%10) / 10 * Math.PI*2;
+    const drawHand=(ang,len,col,w)=>{ctx.strokeStyle=col; ctx.lineWidth=w; ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo((r-len)*Math.cos(ang),(r-len)*Math.sin(ang)); ctx.stroke();};
+    drawHand(a10k,52,'#777',3); drawHand(a1000,36,'#58a6ff',3); drawHand(a100,20,'#f39c12',2);
+    ctx.fillStyle='#111'; ctx.fillRect(-30, r-34, 60, 22); ctx.strokeStyle='#333'; ctx.strokeRect(-30, r-34, 60, 22);
+    ctx.fillStyle='#58a6ff'; ctx.font='bold 16px monospace'; ctx.fillText(Math.round(altFt).toString(), 0, r-23);
+    ctx.restore();
+  }
+}
+class TurnCoordinator extends Instrument {
+  draw(state){
+    const ctx=this.ctx, cw=this.canvas.clientWidth, ch=this.canvas.clientHeight;
+    this.clear();
+    const r=Math.min(cw,ch)*0.46, cx=cw/2, cy=ch/2;
+    ctx.save(); ctx.translate(cx,cy);
+    ctx.strokeStyle='#bbb'; ctx.lineWidth=3; ctx.beginPath(); ctx.arc(0,0,r,0,Math.PI*2); ctx.stroke();
+    ctx.strokeStyle='#ddd'; ctx.beginPath(); ctx.moveTo(-r+18,0); ctx.lineTo(-r+40,0); ctx.moveTo(r-18,0); ctx.lineTo(r-40,0); ctx.stroke();
+    ctx.strokeStyle='#f5c542'; ctx.lineWidth=3; ctx.beginPath(); ctx.moveTo(-28,0); ctx.lineTo(28,0); ctx.moveTo(0,-10); ctx.lineTo(0,10); ctx.stroke();
+    const slip = clamp(state.r*8 - Math.sin(state.roll)*2, -1.5, 1.5);
+    ctx.fillStyle='#58a6ff'; ctx.beginPath(); ctx.arc(slip*20, 22, 6, 0, Math.PI*2); ctx.fill();
+    const bank = clamp(state.roll / (30*DEG), -1, 1);
+    ctx.strokeStyle='#58a6ff'; ctx.lineWidth=4; ctx.beginPath(); ctx.moveTo(-bank*30, -10); ctx.lineTo(-bank*50, -22); ctx.stroke();
+    ctx.restore();
+  }
+}
+class HeadingIndicator extends Instrument {
+  draw(state){
+    const ctx=this.ctx, cw=this.canvas.clientWidth, ch=this.canvas.clientHeight;
+    this.clear();
+    const r=Math.min(cw,ch)*0.46, cx=cw/2, cy=ch/2;
+    ctx.save(); ctx.translate(cx,cy);
+    ctx.strokeStyle='#bbb'; ctx.lineWidth=3; ctx.beginPath(); ctx.arc(0,0,r,0,Math.PI*2); ctx.stroke();
+    ctx.save(); ctx.rotate(-state.yaw);
+    ctx.fillStyle='#c9d1d9'; ctx.strokeStyle='#777'; ctx.lineWidth=2;
+    ctx.font='12px monospace'; ctx.textAlign='center'; ctx.textBaseline='middle';
+    for(let deg=0; deg<360; deg+=5){
+      const ang=deg*DEG - Math.PI/2, len=(deg%30===0)?14:(deg%10===0?10:6);
+      ctx.beginPath();
+      ctx.moveTo((r-10)*Math.cos(ang),(r-10)*Math.sin(ang));
+      ctx.lineTo((r-10-len)*Math.cos(ang),(r-10-len)*Math.sin(ang));
+      ctx.stroke();
+      if(deg%30===0){
+        const label=({0:'N',90:'E',180:'S',270:'W'}[deg] || (deg/10).toString());
+        ctx.fillText(label,(r-34)*Math.cos(ang),(r-34)*Math.sin(ang));
+      }
+    }
+    ctx.restore();
+    ctx.strokeStyle='#f5c542'; ctx.lineWidth=3; ctx.beginPath(); ctx.moveTo(0, -r+8); ctx.lineTo(0, -r+28); ctx.stroke();
+    const hdg=((state.yaw*RAD2DEG)+360)%360;
+    ctx.fillStyle='#111'; ctx.fillRect(-30, r-34, 60, 22); ctx.strokeStyle='#333'; ctx.strokeRect(-30, r-34, 60, 22);
+    ctx.fillStyle='#58a6ff'; ctx.font='bold 16px monospace'; ctx.fillText(Math.round(hdg).toString().padStart(3,'0'), 0, r-23);
+    ctx.restore();
+  }
+}
+class VSI extends Instrument {
+  draw(state){
+    const ctx=this.ctx, cw=this.canvas.clientWidth, ch=this.canvas.clientHeight;
+    this.clear();
+    const r=Math.min(cw,ch)*0.46, cx=cw/2, cy=ch/2;
+    ctx.save(); ctx.translate(cx,cy);
+    ctx.strokeStyle='#bbb'; ctx.lineWidth=3; ctx.beginPath(); ctx.arc(0,0,r,0,Math.PI*2); ctx.stroke();
+    const min=-2000, max=2000, start=-135*DEG, end=135*DEG;
+    for(let k=min; k<=max; k+=250){
+      const t=(k-min)/(max-min), ang=start+t*(end-start), len=(k%500===0)?16:8;
+      ctx.beginPath(); ctx.moveTo((r-10)*Math.cos(ang),(r-10)*Math.sin(ang));
+      ctx.lineTo((r-10-len)*Math.cos(ang),(r-10-len)*Math.sin(ang));
+      ctx.strokeStyle=(k===0)?'#ddd':'#777'; ctx.stroke();
+      if(k%500===0){
+        ctx.fillStyle='#c9d1d9'; ctx.font='12px monospace'; ctx.textAlign='center'; ctx.textBaseline='middle';
+        ctx.fillText((k/1000).toString(), (r-36)*Math.cos(ang),(r-36)*Math.sin(ang));
+      }
+    }
+    const vsi=clamp(fpm(state.vs), min, max);
+    const t=(vsi-min)/(max-min), ang=start+t*(end-start);
+    ctx.strokeStyle='#58a6ff'; ctx.lineWidth=4; ctx.beginPath(); ctx.moveTo(-6,0); ctx.lineTo((r-42)*Math.cos(ang),(r-42)*Math.sin(ang)); ctx.stroke();
+    ctx.fillStyle='#111'; ctx.fillRect(-38, r-34, 76, 22);
+    ctx.strokeStyle='#333'; ctx.strokeRect(-38, r-34, 76, 22);
+    ctx.fillStyle='#58a6ff'; ctx.font='bold 16px monospace'; ctx.textAlign='center';
+    ctx.fillText(Math.round(vsi).toString(), 0, r-23);
+    ctx.restore();
+  }
+}
+
+/* ============================================================
+   Vue "Acrojet" : pixel art (320×200), montagnes, piste, avion
+   ============================================================ */
+class OutsideView {
+  constructor(canvas){
+    this.canvas = canvas;
+    this.ctx = setupHiDPICanvas(canvas);
+    window.addEventListener('resize', ()=> this.ctx = setupHiDPICanvas(canvas));
+
+    // Buffer "low-res" pour rendu pixel
+    this.buf = document.createElement('canvas');
+    this.setBufferSize(320, 200);
+  }
+  setBufferSize(w, h){
+    this.buf.width = w; this.buf.height = h;
+    this.bctx = this.buf.getContext('2d');
+    this.bctx.imageSmoothingEnabled = false;
+  }
+
+  // Palette façon CPC (approximative)
+  get palette(){
+    return {
+      sky1: '#0078f0',
+      sky2: '#00a0ff',
+      ground: '#23d323',
+      groundDark: '#17a717',
+      runway: '#303030',
+      runwayEdge: '#f0f0f0',
+      mountain: '#114488',
+      mountain2: '#0a356a',
+      centerline: '#dddddd',
+      plane: '#ff2222',
+      planeShade: '#aa0000',
+      shadow: '#00000088'
+    };
+  }
+
+  drawMountains(ctx, w, horizonY, phase, color1, color2){
+    // Silhouette (deux plans) – variation sinusoïdale
+    const h1 = 28, h2 = 18;     // hauteurs
+    const step = 8;             // largeur de pas (pixels buffer)
+    ctx.fillStyle = color2;
+    ctx.beginPath();
+    ctx.moveTo(0, horizonY);
+    for(let x=0; x<=w; x+=step){
+      const y = horizonY - (h2 + 6*Math.sin((x+phase*0.6)*0.05) + 4*Math.sin((x+phase*1.1)*0.018));
+      ctx.lineTo(x, y);
+    }
+    ctx.lineTo(w, horizonY); ctx.closePath(); ctx.fill();
+
+    ctx.fillStyle = color1;
+    ctx.beginPath();
+    ctx.moveTo(0, horizonY);
+    for(let x=0; x<=w; x+=step){
+      const y = horizonY - (h1 + 9*Math.sin((x+phase)*0.045) + 7*Math.sin((x+phase*0.7)*0.022));
+      ctx.lineTo(x, y);
+    }
+    ctx.lineTo(w, horizonY); ctx.closePath(); ctx.fill();
+  }
+
+  drawRunway(ctx, w, h, horizonY, roll, lateralShiftPx){
+    const P = this.palette;
+    // Trapèze piste (loin -> près)
+    const farY  = Math.max(horizonY + 8, 20);
+    const nearY = Math.floor(h*0.95);
+    const farW  = 8;
+    const nearW = Math.floor(w*0.28);
+
+    const leftFar  = Math.floor(w/2 - farW/2 + lateralShiftPx*0.15);
+    const rightFar = Math.floor(w/2 + farW/2 + lateralShiftPx*0.15);
+    const leftNear = Math.floor(w/2 - nearW/2 + lateralShiftPx);
+    const rightNear= Math.floor(w/2 + nearW/2 + lateralShiftPx);
+
+    // Ombre "sol" sous l'avion près de la piste
+    ctx.fillStyle = P.shadow;
+    ctx.beginPath();
+    ctx.ellipse(w/2 + lateralShiftPx*0.6, nearY-6, 22, 6, 0, 0, Math.PI*2);
+    ctx.fill();
+
+    // Piste
+    ctx.fillStyle = P.runway;
+    ctx.beginPath();
+    ctx.moveTo(leftFar,  farY);
+    ctx.lineTo(rightFar, farY);
+    ctx.lineTo(rightNear, nearY);
+    ctx.lineTo(leftNear,  nearY);
+    ctx.closePath();
+    ctx.fill();
+
+    // Bords blancs
+    ctx.strokeStyle = P.runwayEdge; ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(leftFar,  farY);   ctx.lineTo(leftNear,  nearY);
+    ctx.moveTo(rightFar, farY);   ctx.lineTo(rightNear, nearY);
+    ctx.stroke();
+
+    // Ligne centrale en pointillés
+    const segCount = 10;
+    for(let i=0;i<segCount;i++){
+      const t0 = i/segCount, t1 = (i+0.5)/segCount; // moitié rempli
+      const y0 = Math.round(farY + (nearY-farY)*t0);
+      const y1 = Math.round(farY + (nearY-farY)*t1);
+      // interpolation linéaire largeur au milieu du trapèze
+      const midW0 = Math.round(farW/2 + (nearW/2 - farW/2)*t0);
+      const midW1 = Math.round(farW/2 + (nearW/2 - farW/2)*t1);
+      const x0 = Math.round(w/2 + lateralShiftPx * (0.15 + 0.85*t0));
+      const x1 = Math.round(w/2 + lateralShiftPx * (0.15 + 0.85*t1));
+      // on trace de y0 à y1, très fin
+      ctx.strokeStyle = P.centerline; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke();
+    }
+  }
+
+  drawPlaneSprite(ctx, x, y, scale, roll){
+    const P = this.palette;
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(roll);
+    ctx.scale(scale, scale);
+
+    // Ailes
+    ctx.fillStyle = P.plane;
+    ctx.strokeStyle = '#330000';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(-18, 0); ctx.lineTo(18, 0); ctx.lineTo(12, 4); ctx.lineTo(-12, 4); ctx.closePath();
+    ctx.fill(); ctx.stroke();
+
+    // Fuselage
+    ctx.beginPath();
+    ctx.moveTo(0, -10); ctx.lineTo(6, 10); ctx.lineTo(-6, 10); ctx.closePath();
+    ctx.fill(); ctx.stroke();
+
+    // Empennage
+    ctx.beginPath();
+    ctx.moveTo(0, 6); ctx.lineTo(8, 14); ctx.lineTo(-8, 14); ctx.closePath();
+    ctx.fill(); ctx.stroke();
+
+    // Verrière / contraste simple
+    ctx.fillStyle = P.planeShade;
+    ctx.fillRect(-2, -4, 4, 4);
+
+    ctx.restore();
+  }
+
+  draw(state){
+    const ctx = this.ctx;
+    const W = this.canvas.clientWidth, H = this.canvas.clientHeight;
+
+    // --- Rendu dans buffer 320×200 (pixel art) ---
+    const b = this.bctx, w = this.buf.width, h = this.buf.height;
+    b.clearRect(0,0,w,h);
+
+    const P = this.palette;
+
+    // Paramètres caméra simulés
+    const pitchPx = Math.round(state.pitch * RAD2DEG * 1.4); // offset vertical horizon (petit)
+    const horizonY = Math.round(h*0.42 + pitchPx);
+
+    // Fond ciel/sol (post-rotation, on dessine large)
+    b.save();
+    // Rotation par le roulis, autour d'un point proche du centre-haut
+    b.translate(Math.floor(w/2), Math.floor(h*0.55));
+    b.rotate(state.roll);
+    b.translate(-Math.floor(w/2), -Math.floor(h*0.55));
+
+    // Ciel (dégradé simple)
+    const skyGrad = b.createLinearGradient(0,0,0,horizonY);
+    skyGrad.addColorStop(0, P.sky2);
+    skyGrad.addColorStop(1, P.sky1);
+    b.fillStyle = skyGrad;
+    b.fillRect(-w, -h, w*3, h*3);
+
+    // Montagnes sur l'horizon
+    const phase = (state.x*0.02 + state.y*0.013 + state.yaw*120) % 10000; // léger défilement
+    this.drawMountains(b, w*3, horizonY, phase, P.mountain, P.mountain2);
+
+    // Sol vert
+    b.fillStyle = P.ground;
+    b.fillRect(-w, horizonY, w*3, h*2);
+
+    // Légères bandes sur le sol (grid très discrète façon 8-bit)
+    b.strokeStyle = P.groundDark; b.lineWidth = 1;
+    for(let y = horizonY+12; y < h*1.4; y += 10){
+      b.beginPath(); b.moveTo(-w, y); b.lineTo(w*2, y); b.stroke();
+    }
+
+    // Piste en perspective (décalage latéral approx par rapport à y)
+    const latShift = clamp(state.y * 0.02, -50, 50);
+    this.drawRunway(b, w, h, horizonY, state.roll, latShift);
+
+    b.restore();
+
+    // Avion rouge au centre (dessiné APRÈS rotation pour rester lisible)
+    const planeX = Math.floor(w/2);
+    const planeY = Math.floor(h*0.58);
+    this.drawPlaneSprite(b, planeX, planeY, 1, state.roll);
+
+    // --- Blit du buffer -> canvas (nearest neighbor) ---
+    ctx.save();
+    // lettre-box pour conserver l'aspect (4:3-ish)
+    const viewAR = w / h, canvasAR = W / H;
+    let dw, dh, dx, dy;
+    if(canvasAR > viewAR){ // canvas plus large
+      dh = H; dw = Math.floor(H * viewAR); dx = Math.floor((W - dw)/2); dy = 0;
+    } else {
+      dw = W; dh = Math.floor(W / viewAR); dx = 0; dy = Math.floor((H - dh)/2);
+    }
+    ctx.imageSmoothingEnabled = false;
+    ctx.clearRect(0,0,W,H);
+    ctx.drawImage(this.buf, 0, 0, w, h, dx, dy, dw, dh);
+    ctx.restore();
+  }
+}
+
+/* ============================================================
+   Entrées clavier
+   ============================================================ */
+class Input {
+  constructor(){
+    this.keys = new Set();
+    window.addEventListener('keydown', e=>{
+      if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight',' '].includes(e.key)) e.preventDefault();
+      this.keys.add(e.key.toLowerCase());
+    });
+    window.addEventListener('keyup', e=> this.keys.delete(e.key.toLowerCase()));
+  }
+  applyTo(aircraft, dt){
+    const rate = 1.2, change = rate*dt;
+    if(this.keys.has('arrowleft'))  aircraft.cmd.aileron = clamp(aircraft.cmd.aileron - change, -1, 1);
+    else if(this.keys.has('arrowright')) aircraft.cmd.aileron = clamp(aircraft.cmd.aileron + change, -1, 1);
+    else aircraft.cmd.aileron = lerp(aircraft.cmd.aileron, 0, 4*dt);
+
+    if(this.keys.has('arrowup')) aircraft.cmd.elevator = clamp(aircraft.cmd.elevator + change, -1, 1);
+    else if(this.keys.has('arrowdown')) aircraft.cmd.elevator = clamp(aircraft.cmd.elevator - change, -1, 1);
+    else aircraft.cmd.elevator = lerp(aircraft.cmd.elevator, 0, 4*dt);
+
+    if(this.keys.has('a')) aircraft.cmd.rudder = clamp(aircraft.cmd.rudder - change, -1, 1);
+    else if(this.keys.has('e')) aircraft.cmd.rudder = clamp(aircraft.cmd.rudder + change, -1, 1);
+    else aircraft.cmd.rudder = lerp(aircraft.cmd.rudder, 0, 4*dt);
+
+    if(this.keys.has('w')) aircraft.cmd.throttle = clamp(aircraft.cmd.throttle + change*0.8, 0, 1);
+    if(this.keys.has('s')) aircraft.cmd.throttle = clamp(aircraft.cmd.throttle - change*0.8, 0, 1);
+  }
+}
+
+/* ============================================================
+   Boucle principale
+   ============================================================ */
+const outside = new OutsideView(document.getElementById('outside'));
+const asi = new AirspeedIndicator(document.getElementById('asi'));
+const att = new AttitudeIndicator(document.getElementById('att'));
+const alt = new Altimeter(document.getElementById('alt'));
+const turn = new TurnCoordinator(document.getElementById('turn'));
+const hdg = new HeadingIndicator(document.getElementById('hdg'));
+const vsi = new VSI(document.getElementById('vsi'));
+
+const legend = document.getElementById('legend');
+const input = new Input();
+const plane = new Aircraft();
+
+let last=performance.now(), acc=0, paused=false;
+
+function setFlaps(on){ plane.ctrl.flaps = plane.cmd.flaps = on?1:0; }
+function resetSim(){ Object.assign(plane, new Aircraft()); }
+
+window.addEventListener('keydown', (e)=>{
+  const k=e.key.toLowerCase();
+  if(k==='p'){ paused=!paused; }
+  if(k==='f'){ setFlaps(!plane.ctrl.flaps); }
+  if(k==='r'){ resetSim(); }
+});
+
+function step(dt){
+  input.applyTo(plane, dt);
+  plane.update(dt);
+}
+
+function render(){
+  outside.draw(plane);
+  asi.draw(plane); att.draw(plane); alt.draw(plane);
+  turn.draw(plane); hdg.draw(plane); vsi.draw(plane);
+
+  const txt = [
+    `<span class="tag"><b>GS</b> ${Math.round(kn(plane.v)).toString().padStart(3,' ')} kts</span>`,
+    `<span class="tag"><b>ALT</b> ${Math.round(ft(plane.alt))} ft</span>`,
+    `<span class="tag"><b>VSI</b> ${Math.round(fpm(plane.vs))} fpm</span>`,
+    `<span class="tag"><b>HDG</b> ${Math.round((plane.yaw*RAD2DEG+360)%360)}°</span>`,
+    `<span class="tag"><b>THR</b> ${(plane.ctrl.throttle*100|0)}%</span>`,
+    `<span class="tag"><b>FLAPS</b> ${plane.ctrl.flaps? 'ON':'OFF'}</span>`
+  ].join(' ');
+  legend.innerHTML = txt;
+}
+
+function loop(now){
+  const dt = Math.min(0.05, (now - last)/1000);
+  last = now;
+  if(!paused){
+    acc += dt;
+    const h = 1/60;
+    while(acc >= h){ step(h); acc -= h; }
+  }
+  render();
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
