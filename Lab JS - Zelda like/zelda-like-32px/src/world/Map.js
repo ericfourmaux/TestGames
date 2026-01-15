@@ -1,0 +1,22 @@
+import { buildLargeMap, SOLID_TILES, TILE_SIZE } from '../config.js';
+import { Player } from '../core/Player.js';
+import { Enemy } from '../core/Enemy.js';
+import { EnemyTypes } from '../core/EnemyTypes.js';
+import { Item } from '../core/Item.js';
+import { StoreNPC } from '../systems/Store.js';
+
+export const MapFactory = { create(assets, events){ const tiles=buildLargeMap(60,40); const player=new Player(3*TILE_SIZE,3*TILE_SIZE, assets.images.player);
+  const entities=[];
+  entities.push(new Enemy(EnemyTypes.SLIME, 8*TILE_SIZE, 10*TILE_SIZE, assets.images.enemy_slime));
+  entities.push(new Enemy(EnemyTypes.SLIME, 20*TILE_SIZE, 14*TILE_SIZE, assets.images.enemy_slime));
+  entities.push(new Enemy(EnemyTypes.BAT,   26*TILE_SIZE, 9*TILE_SIZE,  assets.images.enemy_slime));
+  entities.push(new Item('rupee','Rubis',1, 15*TILE_SIZE,11*TILE_SIZE, assets.images.items));
+  entities.push(new Item('potion','Potion',10, 10*TILE_SIZE,6*TILE_SIZE, assets.images.items));
+  const shop = new StoreNPC(6*TILE_SIZE, 3*TILE_SIZE, [ {id:'potion', name:'Potion', price:5, value:10}, {id:'key', name:'Clé de bronze', price:8, value:0}, {id:'orb', name:'Orbe magique', forItem:'gem', qty:1, value:30}], null);
+  entities.push(shop);
+  events.add(events.makeChest(14,15,{itemId:'key', name:'Clé de bronze', value:0}));
+  events.add(events.makeDoor(16,16,{need:'key'}));
+  events.add(events.makeTeleport(50,8, 6*TILE_SIZE, 30*TILE_SIZE));
+  events.add(events.makeSign(5,10, 'La vieille ruine cache des secrets…'));
+  return { tiles, solid: SOLID_TILES, player, entities };
+} };

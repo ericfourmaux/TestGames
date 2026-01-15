@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <title>Zelda-like (JS ES Modules, 32px)</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <div id="ui">
+    <div id="preload">
+      <div id="bar"></div>
+      <span id="pct">0%</span>
+    </div>
+    <canvas id="game" width="320" height="240"></canvas>
+  </div>
+  <div id="help">
+    <b>Contrôles :</b> ZQSD / ←↑→ se déplacer · Shift courir · E interagir · Espace attaquer · I inventaire
+  </div>
+  <script type="module" src="./src/main.js"></script>
+</body>
+</html>

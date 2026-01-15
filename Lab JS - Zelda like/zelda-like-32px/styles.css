@@ -1,0 +1,7 @@
+html, body { margin:0; background:#0e1013; color:#eaeef2; font-family:system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
+#ui { display:flex; flex-direction:column; align-items:center; gap:12px; padding:16px; }
+#help { text-align:center; opacity:.8; font-size:.9rem; }
+#game { image-rendering: pixelated; image-rendering: crisp-edges; width: 960px; height: 720px; border: 1px solid #2b2f36; background:#14171c; }
+#preload { position:relative; width:320px; height:12px; border:1px solid #333; background:#111; margin:8px 0; }
+#preload #bar { position:absolute; left:0; top:0; height:100%; width:0%; background:#4caf50; transition: width .2s; }
+#preload #pct { position:absolute; top:16px; left:0; right:0; text-align:center; font-size:.9rem; }

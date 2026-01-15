@@ -1,0 +1,1 @@
+export class Camera { constructor(x,y,w,h,WW,HH){ this.x=x; this.y=y; this.w=w; this.h=h; this.WW=WW; this.HH=HH; } follow(px,py){ this.x=px-this.w/2; this.y=py-this.h/2; this.x=Math.max(0, Math.min(this.x, this.WW-this.w)); this.y=Math.max(0, Math.min(this.y, this.HH-this.h)); }}

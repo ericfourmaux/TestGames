@@ -1,0 +1,13 @@
+import { TILE_SIZE } from '../config.js';
+class Trigger { constructor(x,y,w,h,{type='trigger',onEnter=null,onUse=null,once=false,label=null}={}){ this.type=type; this.x=x; this.y=y; this.w=w; this.h=h; this.onEnter=onEnter; this.onUse=onUse; this.once=once; this.done=false; this.label=label; } contains(px,py){ return px>=this.x&&px<=this.x+this.w&&py>=this.y&&py<=this.y+this.h; } }
+export class EventManager { constructor(tilemap,audio,hud){ this.tilemap=tilemap; this.audio=audio; this.hud=hud; this.triggers=[]; }
+  add(t){ this.triggers.push(t); } clear(){ this.triggers.length=0; }
+  update(dt, player, input){ let hinted=false; for(const t of this.triggers){ if(t.done) continue; const inside=t.contains(player.x, player.y); if(inside && t.onEnter){ t.onEnter({player,tilemap:this.tilemap,audio:this.audio,hud:this.hud,trigger:t}); if(t.once) t.done=true; }
+      if(inside && t.onUse){ this.hud.setHint(t.label||'E: interagir'); hinted=true; if(input.isDown('interact')){ t.onUse({player,tilemap:this.tilemap,audio:this.audio,hud:this.hud,trigger:t}); if(t.once) t.done=true; } } }
+    if(!hinted) this.hud.clearHint(); }
+  makeChest(tx,ty,{itemId='gem', name='Gemme', value=20}){ const x=tx*TILE_SIZE, y=ty*TILE_SIZE; return new Trigger(x,y,TILE_SIZE,TILE_SIZE,{ type:'chest', label:'Coffre (E)', onUse:({player,hud,trigger})=>{ if(trigger._opened){ hud.toast('Coffre vide.'); return; } trigger._opened=true; player.inventory.add(itemId,name,value,1); hud.toast(`Tu obtiens ${name} !`); }, once:false }); }
+  makeDoor(tx,ty,{need='key'}={}){ const x=tx*TILE_SIZE, y=ty*TILE_SIZE; return new Trigger(x,y,TILE_SIZE,TILE_SIZE,{ type:'door', label:'Porte (E)', onUse:({player,tilemap,hud})=>{ if(tilemap.tileAt(tx,ty)!==1) return; if(need && !player.inventory.have(need,1)){ hud.toast('Il te faut une clé.'); return; } tilemap.tiles[ty][tx]=0; hud.toast('La porte s’ouvre.'); }, once:false }); }
+  makeTeleport(tx,ty,targetPx,targetPy){ const x=tx*TILE_SIZE, y=ty*TILE_SIZE; return new Trigger(x,y,TILE_SIZE,TILE_SIZE,{ type:'teleport', onEnter:({player,hud})=>{ player.x=targetPx; player.y=targetPy; hud.toast('Téléportation !'); }, once:false }); }
+  makeSign(tx,ty,text='Bienvenue !'){ const x=tx*TILE_SIZE, y=ty*TILE_SIZE; return new Trigger(x,y,TILE_SIZE,TILE_SIZE,{ type:'sign', label:'Lire (E)', onUse:({hud})=> hud.toast(text), once:false }); }
+  drawDebug(ctx){ ctx.save(); ctx.globalAlpha=0.2; for(const t of this.triggers){ ctx.fillStyle= t.type==='door'?'#f59e0b': t.type==='chest'?'#10b981': t.type==='teleport'?'#3b82f6':'#a78bfa'; ctx.fillRect(t.x,t.y,t.w,t.h);} ctx.restore(); }
+}
